@@ -1,4 +1,4 @@
-# Learning-State-Space-Models
+# Learning State Space Models
 
 ### Reference Papers:
 Structured Inference Networks for Nonlinear State Space Models
