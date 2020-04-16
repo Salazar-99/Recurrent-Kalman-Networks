@@ -7,3 +7,4 @@ Structured Inference Networks for Nonlinear State Space Models
 
 Recurrent Kalman Networks:
 - Paper: https://arxiv.org/pdf/1905.07357.pdf
+- Code: https://github.com/LCAS/RKN
