@@ -1,6 +1,7 @@
 import numpy as np 
 import tensorflow as tf
 import math as m
+from utils import pack_input, unpack_state
 
 #Defining pi as a TF constant for performance
 pi = tf.constant(m.pi)
@@ -72,10 +73,8 @@ class RKN(tf.keras.Model):
         w_mean = self._layer_w_mean_norm(self._layer_w_mean(enc_last_hidden))
         w_covar = self._layer_w_covar(enc_last_hidden)
         #Transition
-        #TODO: Implement pack_input
         rkn_in = pack_input(w_mean, w_covar)
         z = self._layer_rkn(rkn_in)
-        #TODO: Implement unpack_state(z)
         post_mean, post_covar = unpack_state(z)
         post_covar = tf.concat(post_covar, -1)
         #Decoder
@@ -129,7 +128,7 @@ class RKN(tf.keras.Model):
         raise NotImplementedError
 
     def build_var_Decoder_hidden(self):
-        rasie NotImplementedError
+        raise NotImplementedError
 
 
 
