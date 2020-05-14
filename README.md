@@ -1,10 +1,5 @@
-# Learning State Space Models
+# Implementation of Recurrent Kalman Networks
 
-### Reference Papers:
-Structured Inference Networks for Nonlinear State Space Models
-- Paper: https://arxiv.org/pdf/1609.09869.pdf
-- Code: https://github.com/clinicalml/structuredinference
-
-Recurrent Kalman Networks:
-- Paper: https://arxiv.org/pdf/1905.07357.pdf
-- Code: https://github.com/LCAS/RKN
+### References:
+- Original Paper: https://arxiv.org/pdf/1905.07357.pdf
+- Original Code: https://github.com/LCAS/RKN

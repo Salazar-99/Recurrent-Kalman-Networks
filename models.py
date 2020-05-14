@@ -1,7 +1,7 @@
 import numpy as np 
 import tensorflow as tf
 import math as m
-from utils import pack_input, unpack_state
+from utils import *
 
 #Defining pi as a TF constant for performance
 pi = tf.constant(m.pi)
@@ -10,7 +10,7 @@ pi = tf.constant(m.pi)
 class RKN(tf.keras.Model):
     #Constructor
     def __init__(self, observation_shape, latent_observation_dim, output_dim, num_basis, bandwidth, 
-                trans_net_hidden_units=[], cell_type='rkn')
+                    trans_net_hidden_units=[], cell_type="rkn"):
         #Inherit standard functionality from tf.keras.Model
         super().__init__()
         self._obs_shape = observation_shape
@@ -22,7 +22,7 @@ class RKN(tf.keras.Model):
         self._ld_output = np.isscalar(self._output_dim)
 
         #The build_encoder_hidden() function is problem specific and is implemented in subclasses of RKN
-        self._enc_hidden_layers = self._time_distributee_layers(self.build_encoder_hidden())
+        self._enc_hidden_layers = self._time_distribute_layers(self.build_encoder_hidden())
 
         #N(0,0.05) initialization to prevent NaN in normalization step
         self._layer_w_mean = tf.keras.layers.TimeDistributed(
@@ -87,14 +87,14 @@ class RKN(tf.keras.Model):
    
     #Loss functions
     def gaussian_neg_log_likelihood(self, targets, pred_mean_var):
-        pred_mean, pred_var = pred_mean_var[,:self._output_dim], pred_mean_var[,self.output_dim:]
+        pred_mean, pred_var = pred_mean_var[..., :self._output_dim], pred_mean_var[..., self.output_dim:]
         pred_var += 1e-8
-        element_wise_nll = 0.5*(tf.log(2*pi)+tf.log(pred_var)+((target-pred_mean)**2/pred_var)
+        element_wise_nll = 0.5*(tf.log(2*pi)+tf.log(pred_var)+((target-pred_mean)**2/pred_var))
         sample_error = tf.reduce_sum(element_wise_nll, axis=-1)
         return tf.reduce_mean(sample_error)
 
     def rmse(self, target, pred_mean_var):
-        pred_mean = pred_mean_var[,:self._output_dim]
+        pred_mean = pred_mean_var[..., :self._output_dim]
         return tf.sqrt(tf.reduce_mean((pred_mean-target)**2))
 
     def bernoulli_neg_log_likelihood(self, targets, predictions, uint8_targets=True):
@@ -110,8 +110,8 @@ class RKN(tf.keras.Model):
     #Helper functions for call
     def _prop_through_layers(inputs, layers):
         h = inputs
-            for layer in layers:
-                h = layer(h)
+        for layer in layers:
+            h = layer(h)
         return h
 
     def _time_distribute_layers(layers):
@@ -171,7 +171,7 @@ class RKNTransitionCell(tf.keras.layers.Layer):
         self._initial_trans_covar = initial_trans_covar
 
     #Forward pass (Prediction and update)
-    def call(self, inputs, states, **kwargs)
+    def call(self, inputs, states, **kwargs):
         #Unpack inputs
         obs_mean, obs_covar = unpack_input(inputs)
         state_mean, state_covar = unpack_state(states[0])
@@ -222,10 +222,59 @@ class RKNTransitionCell(tf.keras.layers.Layer):
         super().build(input_shape)
 
     def _predict(self, post_mean, post_covar):
+        #Compute transition matrix
+        coefficients = self._coefficient_net(post_mean)
+        scaled_matrices = tf.reshape(coefficients, [-1, self._num_basis, 1, 1]) * self._basis_matrices
+        transition_matrix = tf.reduce_sum(scaled_matrices, 1)
+
+        #Predict next prior mean
+        expanded_state_mean = tf.expand_dims(post_mean, -1)
+        new_mean = tf.squeeze(tf.matmul(transition_matrix, expanded_state_mean), -1)
+
+        #Predict next prior covariance
+        b11 = transition_matrix[:, :self._lod, :self._lod]
+        b12 = transition_matrix[:, :self._lod, self._lod:]
+        b21 = transition_matrix[:, self._lod:, :self._lod]
+        b22 = transition_matrix[:, self._lod:, self._lod:]
+
+        covar_upper, covar_lower, covar_side = post_covar
+
+        new_covar_upper = dadat(b11, covar_upper) + 2 * dadbt(b11, covar_side, b12) + dadat(b12, covar_lower) \
+                          + self._trans_covar_upper
+        new_covar_lower = dadat(b21, covar_upper) + 2 * dadbt(b21, covar_side, b22) + dadat(b22, covar_lower) \
+                          + self._trans_covar_lower
+        new_covar_side = dadbt(b21, covar_upper, b11) + dadbt(b22, covar_side, b11) \
+                         + dadbt(b21, covar_side, b12) + dadbt(b22, covar_lower, b12)
+
+        return new_mean, [new_covar_upper, new_covar_lower, new_covar_side]
 
     def _update(self, prior_mean, prior_covar, obs_mean, obs_covar):
+        covar_upper, covar_lower, covar_side = prior_covar
+
+        #Kalman Gain (Eqs. 2, 3)
+        denominator = covar_upper + obs_covar
+        q_upper = covar_upper / denominator
+        q_lower = covar_side / denominator
+
+        #Update Mean (eq 4)
+        residual = obs_mean - prior_mean[:, :self._lod]
+        new_mean = prior_mean + tf.concat([q_upper * residual, q_lower * residual], -1)
+
+        #Update Covariance (Eqs. 5-7)
+        covar_factor = 1 - q_upper
+        new_covar_upper = covar_factor * covar_upper
+        new_covar_lower = covar_lower - q_lower * covar_side
+        new_covar_side = covar_factor * covar_side
+        if self._debug:
+            return new_mean, [new_covar_upper, new_covar_lower, new_covar_side], [q_upper, q_lower]
+        else:
+            return new_mean, [new_covar_upper, new_covar_lower, new_covar_side]
 
     def get_initial_state(self, inputs, bath_size, dtype):
+        initial_mean = tf.zeros([batch_size, 2 * self._lod], dtype=dtype)
+        initial_covar_diag = 10 * tf.ones([batch_size, 2 * self._lod], dtype=dtype)
+        initial_covar_side = tf.zeros([batch_size, 1 * self._lod], dtype=dtype)
+        return tf.concat([initial_mean, initial_covar_diag, initial_covar_side], -1)
 
     @property
     #Required for use with tf.keras.layers.RNN
