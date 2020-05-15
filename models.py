@@ -37,8 +37,8 @@ class RKN(tf.keras.Model):
             tf.keras.layers.Dense(self._lod, activation=lambda x: tf.keras.activations.elu(x)+1))
         
         #RKN Transition cell
-        self._cell = RKNTransitionCell(self._lsd, self._lod, number_of_nasis=num_basis, bandwidth=bandwidth,
-                                        trans_net_hidden_units=trans_net_hidden_units, never_invalid=never_invalid)
+        self._cell = RKNTransitionCell(self._lsd, self._lod, number_of_basis=num_basis, bandwidth=bandwidth,
+                                        trans_net_hidden_units=trans_net_hidden_units)
 
         #RNN layer with RKN cell
         self._layer_rkn = tf.keras.layers.RNN(self._cell, return_sequences=True)
@@ -60,8 +60,12 @@ class RKN(tf.keras.Model):
         #Creating input shape with 'None' as the sequence length (only allowing lists as observation shape)
         if isinstance(observation_shape, list):
             in_shape = [None] + observation_shape
+        elif isinstance(observation_shape, tuple):
+            in_shape = (None, ) + observation_shape
+        elif np.isscalar(observation_shape):
+            in_shape = [None, observation_shape]
         else:
-            raise AssertionError('Observation shape must be a list')
+            raise AssertionError("observation shape needs to be either list, tuple or scalar")
                                                             
         #Creating Input Layer
         inputs = tf.keras.layers.Input(shape=in_shape)
@@ -108,13 +112,13 @@ class RKN(tf.keras.Model):
         return tf.reduce_mean(sample_error)
 
     #Helper functions for call
-    def _prop_through_layers(inputs, layers):
+    def _prop_through_layers(self, inputs, layers):
         h = inputs
         for layer in layers:
             h = layer(h)
         return h
 
-    def _time_distribute_layers(layers):
+    def _time_distribute_layers(self, layers):
         td_layers = []
         for l in layers:
             td_layers.append(tf.keras.layers.TimeDistributed(l))
@@ -156,7 +160,7 @@ class TransitionNet(tf.keras.Model):
             h = hidden_layer(h)
         return self._out_layer(h)
 
-#Performs Kalman update, implemented as a cell ro be used in an RNN inside RKN
+#Performs Kalman update, implemented as a cell to be used in an RNN inside RKN
 class RKNTransitionCell(tf.keras.layers.Layer):
     #Constructor
     def __init__(self, latent_state_dim, latent_obs_dim, number_of_basis, bandwidth, trans_net_hidden_units=[], initial_trans_covar=0.1):
